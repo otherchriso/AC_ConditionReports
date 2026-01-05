@@ -883,19 +883,80 @@ end
 -- Format date according to language DateFormat pattern
 local function formatDate(year, month, day)
     local pattern = lang.DateFormat
+    local result = ""
+    local i = 1
+    local len = #pattern
     
-    -- Replace tokens from longest to shortest to avoid partial matches
-    pattern = pattern:gsub("YYYY", string.format("%04d", year))
-    pattern = pattern:gsub("YY", string.format("%02d", year % 100))
-    pattern = pattern:gsub("MMMM", lang.MonthNames[month] or "")
-    pattern = pattern:gsub("MMM", lang.MonthAbbreviations[month] or "")
-    pattern = pattern:gsub("MM", string.format("%02d", month))
-    pattern = pattern:gsub("M", tostring(month))
-    pattern = pattern:gsub("DD", string.format("%02d", day))
-    pattern = pattern:gsub("_D", string.format("%2d", day))
-    pattern = pattern:gsub("D", tostring(day))
+    while i <= len do
+        local c = pattern:sub(i, i)
+        local handled = false
+        
+        -- Check for 4-char tokens
+        if i + 3 <= len then
+            local s4 = pattern:sub(i, i+3)
+            if s4 == "YYYY" then
+                result = result .. string.format("%04d", year)
+                i = i + 4
+                handled = true
+            elseif s4 == "MMMM" then
+                result = result .. (lang.MonthNames[month] or "")
+                i = i + 4
+                handled = true
+            end
+        end
+        
+        -- Check for 3-char tokens
+        if not handled and i + 2 <= len then
+            local s3 = pattern:sub(i, i+2)
+            if s3 == "MMM" then
+                result = result .. (lang.MonthAbbreviations[month] or "")
+                i = i + 3
+                handled = true
+            end
+        end
+        
+        -- Check for 2-char tokens
+        if not handled and i + 1 <= len then
+            local s2 = pattern:sub(i, i+1)
+            if s2 == "YY" then
+                result = result .. string.format("%02d", year % 100)
+                i = i + 2
+                handled = true
+            elseif s2 == "MM" then
+                result = result .. string.format("%02d", month)
+                i = i + 2
+                handled = true
+            elseif s2 == "DD" then
+                result = result .. string.format("%02d", day)
+                i = i + 2
+                handled = true
+            elseif s2 == "_D" then
+                result = result .. string.format("%2d", day)
+                i = i + 2
+                handled = true
+            end
+        end
+        
+        -- Check for 1-char tokens
+        if not handled then
+            if c == "M" then
+                result = result .. tostring(month)
+                i = i + 1
+                handled = true
+            elseif c == "D" then
+                result = result .. tostring(day)
+                i = i + 1
+                handled = true
+            end
+        end
+        
+        if not handled then
+            result = result .. c
+            i = i + 1
+        end
+    end
     
-    return pattern
+    return result
 end
 
 -- Format time as 24h (HH:MM:SS) or 12h (h:mm:ss AM/PM)
