@@ -468,6 +468,10 @@ local configDefaults = {
     timeUse24h = true,
     timeShowSeconds = true,
     timeFieldOrder = buildDefaultOrder(timeFieldDefs),
+    timePaddingX = 0,
+    timePaddingY = 0,
+    timePaddingLinked = true,
+    timeLineSpacing = 0,
     -- Weather window
     weatherOpacity = 70,
     weatherBgColor = defaultBgColor,
@@ -475,6 +479,10 @@ local configDefaults = {
     weatherBaseFontSize = 14,
     weatherScaleFont = false,
     weatherFieldOrder = buildDefaultOrder(weatherFieldDefs),
+    weatherPaddingX = 0,
+    weatherPaddingY = 0,
+    weatherPaddingLinked = true,
+    weatherLineSpacing = 0,
     -- Grip window
     gripOpacity = 70,
     gripBgColor = defaultBgColor,
@@ -483,6 +491,10 @@ local configDefaults = {
     gripScaleFont = false,
     gripDecimalPlaces = 0,
     gripFieldOrder = buildDefaultOrder(gripFieldDefs),
+    gripPaddingX = 0,
+    gripPaddingY = 0,
+    gripPaddingLinked = true,
+    gripLineSpacing = 0,
 }
 
 -- Add per-field settings for time
@@ -1179,9 +1191,11 @@ local function calculateFitToWidthFontSize(prefix, fieldDefs, getTextFn, baseFon
     local orderKey = prefix .. "FieldOrder"
     local order = getFieldOrder(config[orderKey], fieldDefs)
     
+    local paddingX = config[prefix .. "PaddingX"] or 0
+
     -- Use a reference size for measuring (we'll scale proportionally)
     local refSize = 14
-    local padding = refSize * 2  -- Horizontal padding (scaled later)
+    local basePadding = refSize * 2  -- Horizontal padding (scaled later)
     
     -- Measure each row's width at reference size
     -- A "row" is a sequence of fields where all but the first have inline=true
@@ -1226,7 +1240,7 @@ local function calculateFitToWidthFontSize(prefix, fieldDefs, getTextFn, baseFon
     end
     
     -- Calculate scale factor: how much we can grow refSize to fill windowWidth
-    local availableWidth = windowWidth - (padding * 2)  -- Account for padding
+    local availableWidth = windowWidth - basePadding - (paddingX * 2) 
     local scale = availableWidth / maxRowWidth
     
     -- Clamp scale to reasonable bounds
@@ -1253,6 +1267,10 @@ local function renderWindow(prefix, fieldDefs, getTextFn)
     local winSize = ui.windowSize()
     ui.drawRectFilled(vec2(0, 0), winSize, rgbm(bgColor.r, bgColor.g, bgColor.b, bgOpacity))
     
+    local paddingX = config[prefix .. "PaddingX"] or 0
+    local paddingY = config[prefix .. "PaddingY"] or 0
+    local lineSpacing = config[prefix .. "LineSpacing"] or 0
+
     -- Get font path for measurements
     local fontPath = getFont(config[fontIndexKey] or 1)
     
@@ -1263,6 +1281,13 @@ local function renderWindow(prefix, fieldDefs, getTextFn)
         fontSize = calculateFitToWidthFontSize(prefix, fieldDefs, getTextFn, fontSize, fontPath, winSize.x)
     end
     
+    if paddingY ~= 0 then
+        ui.offsetCursorY(paddingY)
+    end
+    if paddingX ~= 0 then
+        ui.indent(paddingX)
+    end
+
     ui.pushDWriteFont(fontPath)
     
     local order = getFieldOrder(config[orderKey], fieldDefs)
@@ -1282,6 +1307,10 @@ local function renderWindow(prefix, fieldDefs, getTextFn)
             
             if isInline and not isFirst then
                 ui.sameLine(0, fontSize)
+            elseif not isFirst then
+                if lineSpacing ~= 0 then
+                    ui.offsetCursorY(lineSpacing)
+                end
             end
             
             -- Draw label and value with separate colors (using render cache)
@@ -1297,6 +1326,10 @@ local function renderWindow(prefix, fieldDefs, getTextFn)
     end
     
     ui.popDWriteFont()
+    
+    if paddingX ~= 0 then
+        ui.unindent(paddingX)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -1306,7 +1339,10 @@ end
 -- Pre-allocated refnumber objects for sliders (avoid allocations per frame)
 local sliderRefs = {
     opacity = refnumber(0),
-    size = refnumber(0)
+    size = refnumber(0),
+    paddingX = refnumber(0),
+    paddingY = refnumber(0),
+    lineSpacing = refnumber(0)
 }
 
 -- Reset all settings for a specific window to defaults
@@ -1323,6 +1359,10 @@ local function resetWindowConfig(prefix, fieldDefs, extraKeys)
     config[prefix .. "BaseFontSize"] = configDefaults[prefix .. "BaseFontSize"]
     config[prefix .. "ScaleFont"] = configDefaults[prefix .. "ScaleFont"]
     config[orderKey] = configDefaults[orderKey]
+    config[prefix .. "PaddingX"] = configDefaults[prefix .. "PaddingX"]
+    config[prefix .. "PaddingY"] = configDefaults[prefix .. "PaddingY"]
+    config[prefix .. "PaddingLinked"] = configDefaults[prefix .. "PaddingLinked"]
+    config[prefix .. "LineSpacing"] = configDefaults[prefix .. "LineSpacing"]
     
     -- Reset background color cache
     resetCachedColor(prefix .. "BgColor", configDefaults[prefix .. "BgColor"])
@@ -1453,13 +1493,53 @@ local function renderSettings(prefix, fieldDefs)
     if ui.slider("Background Opacity", sliderRefs.opacity, 0, 100, "%.0f%%") then
         config[opacityKey] = sliderRefs.opacity.value
     end
-    
     ui.sameLine()
     local bgColor = getCachedColor(bgColorKey, config[bgColorKey] or defaultBgColor)
     ui.colorButton("BG##bgc", bgColor,
             ui.ColorPickerFlags.NoAlpha + ui.ColorPickerFlags.PickerHueBar)
     config[bgColorKey] = rgbmToHex(bgColor)
     if ui.itemHovered() then ui.setTooltip("Background color") end
+
+    local paddingXKey = prefix .. "PaddingX"
+    local paddingYKey = prefix .. "PaddingY"
+    local linkedKey = prefix .. "PaddingLinked"
+
+    ui.setNextItemWidth(150)
+    sliderRefs.paddingX.value = config[paddingXKey] or 0
+    if ui.slider("Padding X", sliderRefs.paddingX, 0, 60, "%.0f px") then
+        config[paddingXKey] = sliderRefs.paddingX.value
+        if config[linkedKey] then
+            config[paddingYKey] = sliderRefs.paddingX.value
+        end
+    end
+    
+    ui.sameLine()
+    if ui.checkbox("##link" .. prefix, config[linkedKey]) then
+        config[linkedKey] = not config[linkedKey]
+        if config[linkedKey] then
+            config[paddingYKey] = config[paddingXKey]
+        end
+    end
+    if ui.itemHovered() then ui.setTooltip("Link X and Y Padding") end
+
+    ui.setNextItemWidth(150)
+    if config[linkedKey] then
+        ui.pushStyleVar(ui.StyleVar.Alpha, 0.5)
+        local displayVal = refnumber(config[paddingXKey] or 0)
+        ui.slider("Padding Y", displayVal, 0, 60, "%.0f px")
+        ui.popStyleVar()
+    else
+        sliderRefs.paddingY.value = config[paddingYKey] or 0
+        if ui.slider("Padding Y", sliderRefs.paddingY, 0, 60, "%.0f px") then
+            config[paddingYKey] = sliderRefs.paddingY.value
+        end
+    end
+
+    ui.setNextItemWidth(150)
+    sliderRefs.lineSpacing.value = config[prefix .. "LineSpacing"] or 0
+    if ui.slider("Line spacing", sliderRefs.lineSpacing, -100, 100, "%.0f px") then
+        config[prefix .. "LineSpacing"] = sliderRefs.lineSpacing.value
+    end
     
     ui.offsetCursorY(SETTINGS_SECTION_SPACING)
     ui.header("Font Options")
