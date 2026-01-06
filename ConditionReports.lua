@@ -762,8 +762,8 @@ end
 
 -- Convert filename to display name (fallback when metadata unavailable)
 local function fileToDisplayName(filename)
-    -- Case-insensitive extension removal
-    local name = filename:lower():gsub("%.ttf$", ""):gsub("%.otf$", ""):gsub("%.ttc$", ""):gsub("%.otc$", "")
+    -- Case-insensitive extension removal (TTF only)
+    local name = filename:lower():gsub("%.ttf$", ""):gsub("%.ttc$", "")
     -- But use original casing for the name portion
     name = filename:sub(1, #name)
     -- Replace common separators with spaces
@@ -786,24 +786,13 @@ local function getFontDisplayName(filePath, filename)
     return fileToDisplayName(filename)
 end
 
--- Scan content/fonts/ for TTF/OTF files and build font list
+-- Scan content/fonts/ for TTF files and build font list
+-- Note: OTF fonts are not supported by CSP's ui.pushDWriteFont()
 local function scanFonts()
     local fonts = {}
     local files = io.scanDir(acFontsPath, "*.ttf")
     if files then
         for _, file in ipairs(files) do
-            local fullPath = acFontsPath .. file
-            local displayName = getFontDisplayName(fullPath, file)
-            table.insert(fonts, {
-                name = displayName,
-                font = fullPath
-            })
-        end
-    end
-    -- Also scan for OTF files
-    local otfFiles = io.scanDir(acFontsPath, "*.otf")
-    if otfFiles then
-        for _, file in ipairs(otfFiles) do
             local fullPath = acFontsPath .. file
             local displayName = getFontDisplayName(fullPath, file)
             table.insert(fonts, {
@@ -1573,7 +1562,7 @@ local function renderSettings(prefix, fieldDefs)
         refreshFontNames()
     end
     if ui.itemHovered() then
-        ui.setTooltip("Rescan content/fonts/ for new TTF files")
+        ui.setTooltip("Rescan content/fonts/ for TTF files (OTF not supported)")
     end
     
     ui.setNextItemWidth(150)
