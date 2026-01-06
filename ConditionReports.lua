@@ -1172,6 +1172,14 @@ end
 -- GENERIC RENDER FUNCTION
 ---------------------------------------------------------------------------
 
+-- Window control state for manual positioning
+-- local windowControl = {} -- Positioning not available in API
+
+local function getWindowControl(prefix)
+    -- Stub or remove
+    return nil
+end
+
 -- Measure the width of a single field (label + gap + value) at given font size
 local function measureFieldWidth(labelText, valueText, fontSize, fontPath)
     local width = 0
@@ -1251,7 +1259,7 @@ local function calculateFitToWidthFontSize(prefix, fieldDefs, getTextFn, baseFon
     return refSize * scale
 end
 
-local function renderWindow(prefix, fieldDefs, getTextFn)
+local function renderWindow(prefix, fieldDefs, getTextFn, settingsWindowId, windowName)
     anyWindowVisible = true  -- Mark that at least one window was rendered this frame
     
     local opacityKey = prefix .. "Opacity"
@@ -1267,6 +1275,11 @@ local function renderWindow(prefix, fieldDefs, getTextFn)
     local winSize = ui.windowSize()
     ui.drawRectFilled(vec2(0, 0), winSize, rgbm(bgColor.r, bgColor.g, bgColor.b, bgOpacity))
     
+    -- Right-click to open separate settings window
+    if settingsWindowId and ui.windowHovered() and ui.mouseClicked(ui.MouseButton.Right) then
+        ui.openWindow(settingsWindowId)
+    end
+
     local paddingX = config[prefix .. "PaddingX"] or 0
     local paddingY = config[prefix .. "PaddingY"] or 0
     local lineSpacing = config[prefix .. "LineSpacing"] or 0
@@ -1448,18 +1461,18 @@ local function renderSettings(prefix, fieldDefs)
                 local labelColorKey = prefix .. "LabelColor" .. id
                 local valueColorKey = prefix .. "ValueColor" .. id
                 
-                ui.sameLine(180)
+                ui.sameLine(250)
                 if ui.checkbox("Label##" .. id, config[labelKey]) then
                     config[labelKey] = not config[labelKey]
                 end
                 
-                ui.sameLine(240)
+                ui.sameLine(330)
                 if ui.checkbox("Inline##" .. id, config[inlineKey]) then
                     config[inlineKey] = not config[inlineKey]
                 end
                 
                 -- Label color picker (uses cached rgbm that picker modifies in-place)
-                ui.sameLine(300)
+                ui.sameLine(410)
                 local lblColor = getCachedColor(labelColorKey, config[labelColorKey])
                 ui.colorButton("Lbl##lc" .. id, lblColor, 
                         ui.ColorPickerFlags.AlphaBar + ui.ColorPickerFlags.AlphaPreview + ui.ColorPickerFlags.PickerHueBar)
@@ -1614,7 +1627,7 @@ end
 -- TIME WINDOW
 ---------------------------------------------------------------------------
 function script.windowTime(dt)
-    renderWindow("time", timeFieldDefs, getTimeFieldText)
+    renderWindow("time", timeFieldDefs, getTimeFieldText, "time_options", "ConditionReports Time")
 end
 
 function script.windowTimeSettings(dt)
@@ -1650,7 +1663,7 @@ end
 -- WEATHER WINDOW
 ---------------------------------------------------------------------------
 function script.windowWeather(dt)
-    renderWindow("weather", weatherFieldDefs, getWeatherFieldText)
+    renderWindow("weather", weatherFieldDefs, getWeatherFieldText, "weather_options", "ConditionReports Weather")
 end
 
 function script.windowWeatherSettings(dt)
@@ -1668,7 +1681,7 @@ end
 -- GRIP WINDOW
 ---------------------------------------------------------------------------
 function script.windowGrip(dt)
-    renderWindow("grip", gripFieldDefs, getGripFieldText)
+    renderWindow("grip", gripFieldDefs, getGripFieldText, "grip_options", "ConditionReports Grip")
 end
 
 function script.windowGripSettings(dt)
