@@ -48,6 +48,7 @@ local defaultStrings = {
         RainIntensity = "Rain",
         TrackWetness = "Wetness",
         StandingWater = "Puddles",
+        Humidity = "Humidity",
         Grip = "Grip",
         Air = "Air",
         Road = "Road",
@@ -431,6 +432,7 @@ local weatherFieldDefs = {
     { id = "Transition",    name = "Transition",     defaultShow = true, defaultLabel = true, defaultInline = false },
     { id = "Forecast",      name = "Forecast",       defaultShow = true, defaultLabel = true, defaultInline = false },
     { id = "Temperature",   name = "Temperature",    defaultShow = true, defaultLabel = true, defaultInline = false },
+    { id = "Humidity",      name = "Humidity",       defaultShow = true, defaultLabel = true, defaultInline = false },
     { id = "Wind",          name = "Wind",           defaultShow = true, defaultLabel = true, defaultInline = false },
     { id = "RainIntensity", name = "Rain Intensity", defaultShow = true, defaultLabel = true, defaultInline = false },
     { id = "TrackWetness",  name = "Track Wetness",  defaultShow = true, defaultLabel = true, defaultInline = false },
@@ -1067,6 +1069,10 @@ local function computeData()
     data.forecast = getWeatherName(sim.weatherConditions.upcomingType)
     data.surfaceGrip = sim.roadGrip  -- 0 to 1
     
+    -- Humidity (from conditions set, not sim)
+    local conditions = ac.getConditionsSet()
+    data.humidity = math.floor((conditions.humidity or 0) * 100 + 0.5)
+    
     -- Rain and wetness data (0-100%)
     data.transition = math.floor((sim.weatherConditions.transition or 0) * 100 + 0.5)
     data.rainIntensity = math.floor((sim.rainIntensity or 0) * 100 + 0.5)
@@ -1125,6 +1131,8 @@ local function getWeatherFieldText(id, showLabel)
         else
             return "", string.format("%d%s/%d%s", data.airTemp, data.tempUnit, data.roadTemp, data.tempUnit)
         end
+    elseif id == "Humidity" then
+        return showLabel and lang.Labels.Humidity or "", string.format("%d%%", data.humidity)
     elseif id == "Wind" then
         if showLabel then
             return lang.Labels.Wind, string.format("%s %d %s", data.windDir, data.windSpeed, data.windUnit)
