@@ -358,7 +358,8 @@ end
 ---------------------------------------------------------------------------
 local defaultLabelColor = "#B0B0B0FF"  -- Light gray for labels
 local defaultValueColor = "#FFFFFFFF"  -- White for values
-local defaultBgColor = "#000000FF"     -- Black for background
+local defaultBgColor = "#000000B3"     -- Black at 70% opacity for background
+local defaultBorderColor = "#FFFFFF00" -- Transparent border by default
 
 local colorCache = {}  -- Cache of rgbm objects keyed by config key
 local renderColorCache = {}  -- Separate cache for render colors (not modified by picker)
@@ -464,6 +465,10 @@ local configDefaults = {
     -- Time window
     timeOpacity = 70,
     timeBgColor = defaultBgColor,
+    timeBgAlphaMigrated = false,
+    timeBorderColor = defaultBorderColor,
+    timeBorderThickness = 1,
+    timeCornerRadius = 0,
     timeFontIndex = 1,
     timeBaseFontSize = 14,
     timeScaleFont = false,
@@ -474,9 +479,14 @@ local configDefaults = {
     timePaddingY = 0,
     timePaddingLinked = true,
     timeLineSpacing = 0,
+    timePresets = "[]",
     -- Weather window
     weatherOpacity = 70,
     weatherBgColor = defaultBgColor,
+    weatherBgAlphaMigrated = false,
+    weatherBorderColor = defaultBorderColor,
+    weatherBorderThickness = 1,
+    weatherCornerRadius = 0,
     weatherFontIndex = 1,
     weatherBaseFontSize = 14,
     weatherScaleFont = false,
@@ -485,9 +495,14 @@ local configDefaults = {
     weatherPaddingY = 0,
     weatherPaddingLinked = true,
     weatherLineSpacing = 0,
+    weatherPresets = "[]",
     -- Grip window
     gripOpacity = 70,
     gripBgColor = defaultBgColor,
+    gripBgAlphaMigrated = false,
+    gripBorderColor = defaultBorderColor,
+    gripBorderThickness = 1,
+    gripCornerRadius = 0,
     gripFontIndex = 1,
     gripBaseFontSize = 14,
     gripScaleFont = false,
@@ -497,6 +512,7 @@ local configDefaults = {
     gripPaddingY = 0,
     gripPaddingLinked = true,
     gripLineSpacing = 0,
+    gripPresets = "[]",
 }
 
 -- Add per-field settings for time
@@ -527,6 +543,131 @@ for _, f in ipairs(gripFieldDefs) do
 end
 
 local config = ac.storage(configDefaults)
+
+local function clamp01(value)
+    return math.max(0, math.min(1, value or 0))
+end
+
+local function migrateBackgroundAlpha(prefix)
+    local migratedKey = prefix .. "BgAlphaMigrated"
+    if config[migratedKey] then return end
+    local bgColorKey = prefix .. "BgColor"
+    local opacity = config[prefix .. "Opacity"]
+    if opacity ~= nil then
+        local color = hexToRgbm(config[bgColorKey] or defaultBgColor)
+        color.mult = clamp01(opacity / 100)
+        config[bgColorKey] = rgbmToHex(color)
+        resetCachedColor(bgColorKey, config[bgColorKey])
+    end
+    config[migratedKey] = true
+end
+
+migrateBackgroundAlpha("time")
+migrateBackgroundAlpha("weather")
+migrateBackgroundAlpha("grip")
+
+-- Window geometry helpers for preset save/restore via ac.accessAppWindow()
+local windowTitles = {
+    time = "ConditionReports Time",
+    weather = "ConditionReports Weather",
+    grip = "ConditionReports Grip",
+}
+local windowAccessorNames = {}
+
+local function discoverWindowNames()
+    local windows = ac.getAppWindows()
+    for _, window in ipairs(windows) do
+        for prefix, title in pairs(windowTitles) do
+            if window.title == title or window.name == title then
+                windowAccessorNames[prefix] = window.name
+            end
+        end
+    end
+end
+
+local function getWindowAccessor(prefix)
+    if not windowAccessorNames[prefix] then discoverWindowNames() end
+    local name = windowAccessorNames[prefix]
+    if not name then return nil end
+    local window = ac.accessAppWindow(name)
+    if window and window:valid() then return window end
+    return nil
+end
+
+local function prefixTitle(prefix)
+    return prefix:sub(1, 1):upper() .. prefix:sub(2)
+end
+
+local function captureWindowGeometry(prefix)
+    local data = {}
+    local window = getWindowAccessor(prefix)
+    if window then
+        local pos = window:position()
+        local size = window:size()
+        local suffix = prefixTitle(prefix)
+        data["_winPos" .. suffix] = string.format("%.0f,%.0f", pos.x, pos.y)
+        data["_winSize" .. suffix] = string.format("%.0f,%.0f", size.x, size.y)
+    end
+    return data
+end
+
+local function applyWindowGeometry(prefix, data)
+    local suffix = prefixTitle(prefix)
+    local posStr = data["_winPos" .. suffix]
+    local sizeStr = data["_winSize" .. suffix]
+    if not posStr and not sizeStr then return end
+    local window = getWindowAccessor(prefix)
+    if not window then return end
+    if sizeStr then
+        local width, height = sizeStr:match("([%d%.%-]+),([%d%.%-]+)")
+        if width and height then window:resize(vec2(tonumber(width), tonumber(height))) end
+    end
+    if posStr then
+        local x, y = posStr:match("([%d%.%-]+),([%d%.%-]+)")
+        if x and y then window:move(vec2(tonumber(x), tonumber(y))) end
+    end
+end
+
+local function pathRoundedRect(p1, p2, radius)
+    local r = math.min(radius, (p2.x - p1.x) * 0.5, (p2.y - p1.y) * 0.5)
+    if r <= 0 then
+        ui.pathLineTo(p1)
+        ui.pathLineTo(vec2(p2.x, p1.y))
+        ui.pathLineTo(p2)
+        ui.pathLineTo(vec2(p1.x, p2.y))
+        return
+    end
+    local segments = math.max(8, math.ceil(r * 0.8))
+    local pi2 = math.pi * 0.5
+    ui.pathArcTo(vec2(p2.x - r, p1.y + r), r, -pi2, 0, segments)
+    ui.pathArcTo(vec2(p2.x - r, p2.y - r), r, 0, pi2, segments)
+    ui.pathArcTo(vec2(p1.x + r, p2.y - r), r, pi2, pi2 * 2, segments)
+    ui.pathArcTo(vec2(p1.x + r, p1.y + r), r, pi2 * 2, pi2 * 3, segments)
+end
+
+local function drawWindowChrome(origin, size, prefix)
+    local bgColorKey = prefix .. "BgColor"
+    local borderColorKey = prefix .. "BorderColor"
+    local radius = config[prefix .. "CornerRadius"] or 0
+    local thickness = config[prefix .. "BorderThickness"] or 1
+    local bgColor = getRenderColor(bgColorKey, config[bgColorKey] or defaultBgColor)
+    local borderColor = getRenderColor(borderColorKey, config[borderColorKey] or defaultBorderColor)
+    local hasBorder = borderColor.mult > 0 and thickness > 0
+    local inset = hasBorder and math.ceil(thickness * 0.5) or 0
+    local p1 = origin + vec2(inset, inset)
+    local p2 = origin + size - vec2(inset, inset)
+
+    if bgColor.mult > 0 then
+        ui.pathClear()
+        pathRoundedRect(p1, p2, radius)
+        ui.pathFillConvex(bgColor)
+    end
+    if hasBorder then
+        ui.pathClear()
+        pathRoundedRect(p1, p2, radius)
+        ui.pathStroke(borderColor, true, thickness)
+    end
+end
 
 -- Load language from stored preference on startup
 loadLanguage(i18nDir .. config.languageCode .. ".ini")
@@ -1259,18 +1400,14 @@ end
 local function renderWindow(prefix, fieldDefs, getTextFn, settingsWindowId, windowName)
     anyWindowVisible = true  -- Mark that at least one window was rendered this frame
     
-    local opacityKey = prefix .. "Opacity"
-    local bgColorKey = prefix .. "BgColor"
     local fontIndexKey = prefix .. "FontIndex"
     local baseSizeKey = prefix .. "BaseFontSize"
     local scaleFontKey = prefix .. "ScaleFont"
     local orderKey = prefix .. "FieldOrder"
-    
-    -- Background with configurable color and opacity
-    local bgOpacity = (config[opacityKey] or 70) / 100
-    local bgColor = getRenderColor(bgColorKey, config[bgColorKey] or defaultBgColor)
-    local winSize = ui.windowSize()
-    ui.drawRectFilled(vec2(0, 0), winSize, rgbm(bgColor.r, bgColor.g, bgColor.b, bgOpacity))
+
+    local origin = ui.getCursor()
+    local size = ui.availableSpace()
+    drawWindowChrome(origin, size, prefix)
     
     -- Right-click to open separate settings window
     if settingsWindowId and ui.windowHovered() and ui.mouseClicked(ui.MouseButton.Right) then
@@ -1288,58 +1425,54 @@ local function renderWindow(prefix, fieldDefs, getTextFn, settingsWindowId, wind
     local fontSize = config[baseSizeKey] or 14
     if config[scaleFontKey] then
         -- Fit to width: measure content and scale to fill window
-        fontSize = calculateFitToWidthFontSize(prefix, fieldDefs, getTextFn, fontSize, fontPath, winSize.x)
-    end
-    
-    if paddingY ~= 0 then
-        ui.offsetCursorY(paddingY)
-    end
-    if paddingX ~= 0 then
-        ui.indent(paddingX)
+        fontSize = calculateFitToWidthFontSize(prefix, fieldDefs, getTextFn, fontSize, fontPath, size.x)
     end
 
-    ui.pushDWriteFont(fontPath)
-    
-    local order = getFieldOrder(config[orderKey], fieldDefs)
-    local isFirst = true
-    
-    for _, id in ipairs(order) do
-        local showKey = prefix .. "Show" .. id
-        local labelKey = prefix .. "Label" .. id
-        local inlineKey = prefix .. "Inline" .. id
-        local labelColorKey = prefix .. "LabelColor" .. id
-        local valueColorKey = prefix .. "ValueColor" .. id
-        
-        if config[showKey] then
-            local showLabel = config[labelKey]
-            local labelText, valueText = getTextFn(id, showLabel)
-            local isInline = config[inlineKey]
-            
-            if isInline and not isFirst then
-                ui.sameLine(0, fontSize)
-            elseif not isFirst then
-                if lineSpacing ~= 0 then
-                    ui.offsetCursorY(lineSpacing)
+    ui.pushStyleColor(ui.StyleColor.ChildBg, rgbm(0, 0, 0, 0))
+    ui.pushStyleVar(ui.StyleVar.WindowPadding, vec2(paddingX, paddingY))
+    ui.childWindow("##" .. prefix .. "Frame", size, false,
+            bit.bor(ui.WindowFlags.NoScrollbar, ui.WindowFlags.AlwaysUseWindowPadding), function()
+        ui.pushDWriteFont(fontPath)
+
+        local order = getFieldOrder(config[orderKey], fieldDefs)
+        local isFirst = true
+
+        for _, id in ipairs(order) do
+            local showKey = prefix .. "Show" .. id
+            local labelKey = prefix .. "Label" .. id
+            local inlineKey = prefix .. "Inline" .. id
+            local labelColorKey = prefix .. "LabelColor" .. id
+            local valueColorKey = prefix .. "ValueColor" .. id
+
+            if config[showKey] then
+                local showLabel = config[labelKey]
+                local labelText, valueText = getTextFn(id, showLabel)
+                local isInline = config[inlineKey]
+
+                if isInline and not isFirst then
+                    ui.sameLine(0, fontSize)
+                elseif not isFirst then
+                    if lineSpacing ~= 0 then
+                        ui.offsetCursorY(lineSpacing)
+                    end
                 end
+
+                -- Draw label and value with separate colors (using render cache)
+                if showLabel and labelText and labelText ~= "" then
+                    ui.dwriteText(labelText, fontSize, getRenderColor(labelColorKey, config[labelColorKey]))
+                    ui.sameLine(0, fontSize * LABEL_VALUE_GAP_FACTOR)
+                end
+                if valueText and valueText ~= "" then
+                    ui.dwriteText(valueText, fontSize, getRenderColor(valueColorKey, config[valueColorKey]))
+                end
+                isFirst = false
             end
-            
-            -- Draw label and value with separate colors (using render cache)
-            if showLabel and labelText and labelText ~= "" then
-                ui.dwriteText(labelText, fontSize, getRenderColor(labelColorKey, config[labelColorKey]))
-                ui.sameLine(0, fontSize * LABEL_VALUE_GAP_FACTOR)
-            end
-            if valueText and valueText ~= "" then
-                ui.dwriteText(valueText, fontSize, getRenderColor(valueColorKey, config[valueColorKey]))
-            end
-            isFirst = false
         end
-    end
-    
-    ui.popDWriteFont()
-    
-    if paddingX ~= 0 then
-        ui.unindent(paddingX)
-    end
+
+        ui.popDWriteFont()
+    end)
+    ui.popStyleVar()
+    ui.popStyleColor()
 end
 
 ---------------------------------------------------------------------------
@@ -1348,12 +1481,22 @@ end
 
 -- Pre-allocated refnumber objects for sliders (avoid allocations per frame)
 local sliderRefs = {
-    opacity = refnumber(0),
     size = refnumber(0),
     paddingX = refnumber(0),
     paddingY = refnumber(0),
     lineSpacing = refnumber(0)
 }
+
+local COLOR_PICKER_FLAGS = ui.ColorPickerFlags.AlphaBar + ui.ColorPickerFlags.AlphaPreview + ui.ColorPickerFlags.PickerHueBar
+local DISPLAY_ROW_BUTTON_SIZE = vec2(23, 23)
+
+local function intSlider(label, configKey, minVal, maxVal)
+    ui.setNextItemWidth(150)
+    local newValue, changed = ui.slider(label, config[configKey] or minVal, minVal, maxVal, "%.0f px")
+    if changed then
+        config[configKey] = math.floor(newValue + 0.5)
+    end
+end
 
 -- Reset all settings for a specific window to defaults
 -- extraKeys is an optional table of additional keys to reset (e.g., {"timeUse24h", "timeShowSeconds"})
@@ -1365,6 +1508,10 @@ local function resetWindowConfig(prefix, fieldDefs, extraKeys)
     -- Reset common window settings
     config[prefix .. "Opacity"] = configDefaults[prefix .. "Opacity"]
     config[prefix .. "BgColor"] = configDefaults[prefix .. "BgColor"]
+    config[prefix .. "BgAlphaMigrated"] = true
+    config[prefix .. "BorderColor"] = configDefaults[prefix .. "BorderColor"]
+    config[prefix .. "BorderThickness"] = configDefaults[prefix .. "BorderThickness"]
+    config[prefix .. "CornerRadius"] = configDefaults[prefix .. "CornerRadius"]
     config[prefix .. "FontIndex"] = configDefaults[prefix .. "FontIndex"]
     config[prefix .. "BaseFontSize"] = configDefaults[prefix .. "BaseFontSize"]
     config[prefix .. "ScaleFont"] = configDefaults[prefix .. "ScaleFont"]
@@ -1376,6 +1523,7 @@ local function resetWindowConfig(prefix, fieldDefs, extraKeys)
     
     -- Reset background color cache
     resetCachedColor(prefix .. "BgColor", configDefaults[prefix .. "BgColor"])
+    resetCachedColor(prefix .. "BorderColor", configDefaults[prefix .. "BorderColor"])
     
     -- Reset per-field settings
     for _, f in ipairs(fieldDefs) do
@@ -1404,9 +1552,216 @@ local function resetWindowConfig(prefix, fieldDefs, extraKeys)
     end
 end
 
+local presetState = {
+    time = { inputName = "", selectedIndex = 0, cleanupChecked = {} },
+    weather = { inputName = "", selectedIndex = 0, cleanupChecked = {} },
+    grip = { inputName = "", selectedIndex = 0, cleanupChecked = {} },
+}
+
+local presetForceCleanupTab = {
+    time = false,
+    weather = false,
+    grip = false,
+}
+
+local function loadPresets(storageKey)
+    local raw = config[storageKey]
+    if not raw or raw == "" or raw == "[]" then return {} end
+    local ok, result = pcall(JSON.parse, raw)
+    if ok and type(result) == "table" then return result end
+    return {}
+end
+
+local function savePresets(storageKey, presets)
+    config[storageKey] = JSON.stringify(presets)
+end
+
+local function sortPresets(presets)
+    table.sort(presets, function(a, b) return (a.name or ""):lower() < (b.name or ""):lower() end)
+end
+
+local function shouldCapturePrefixKey(prefix, key)
+    if key == prefix .. "Presets" then return false end
+    if key == prefix .. "Opacity" then return false end
+    if key == prefix .. "BgAlphaMigrated" then return false end
+    return key:sub(1, #prefix) == prefix
+end
+
+local function captureWindowConfig(prefix)
+    local data = {}
+    for key in pairs(configDefaults) do
+        if shouldCapturePrefixKey(prefix, key) then
+            data[key] = config[key]
+        end
+    end
+    local geometry = captureWindowGeometry(prefix)
+    for key, value in pairs(geometry) do data[key] = value end
+    return data
+end
+
+local function applyPresetData(prefix, data)
+    for key, value in pairs(data) do
+        if configDefaults[key] ~= nil and shouldCapturePrefixKey(prefix, key) then
+            config[key] = value
+        end
+    end
+    colorCache = {}
+    renderColorCache = {}
+    fieldOrderCache = {}
+    applyWindowGeometry(prefix, data)
+end
+
+local function renderPresetSection(prefix, resetFunc)
+    ui.offsetCursorY(SETTINGS_SECTION_SPACING)
+    ui.header("Config Presets")
+
+    local storageKey = prefix .. "Presets"
+    local state = presetState[prefix]
+    local presets = loadPresets(storageKey)
+    local presetNames = {}
+    for i, preset in ipairs(presets) do presetNames[i] = preset.name end
+
+    if state.selectedIndex < 0 then state.selectedIndex = 0 end
+    if state.selectedIndex > #presets then state.selectedIndex = #presets end
+
+    if state.selectedIndex > 0 and state.appliedData then
+        for key, value in pairs(state.appliedData) do
+            if configDefaults[key] ~= nil and config[key] ~= value then
+                state.selectedIndex = 0
+                state.appliedData = nil
+                break
+            end
+        end
+    end
+
+    local hasPresets = #presets > 0
+    if not hasPresets then ui.pushDisabled() end
+    ui.text("Apply preset")
+    ui.sameLine()
+    ui.setNextItemWidth(200)
+    local newIndex = ui.combo("##presetSel" .. prefix, state.selectedIndex, ui.ComboFlags.None, presetNames)
+    if newIndex ~= state.selectedIndex and newIndex >= 1 and newIndex <= #presets then
+        local preset = presets[newIndex]
+        if preset and preset.data then
+            applyPresetData(prefix, preset.data)
+            state.selectedIndex = newIndex
+            state.appliedData = preset.data
+            ui.toast(ui.Icons.Confirm, "Preset applied: " .. preset.name)
+        end
+    end
+    if not hasPresets then ui.popDisabled() end
+
+    ui.setNextItemWidth(200)
+    local newName = ui.inputText("##presetName" .. prefix, state.inputName, ui.InputTextFlags.Placeholder)
+    if #newName > 32 then newName = newName:sub(1, 32) end
+    state.inputName = newName
+
+    ui.sameLine()
+    local canSave = state.inputName:match("%S") ~= nil
+    local isOverwrite = false
+    if canSave then
+        for _, preset in ipairs(presets) do
+            if preset.name == state.inputName then isOverwrite = true; break end
+        end
+    end
+    if not canSave then ui.pushDisabled() end
+    if ui.button((isOverwrite and "Overwrite config##" or "Save new config##") .. prefix) then
+        local name = state.inputName
+        local data = captureWindowConfig(prefix)
+        local replaced = false
+        for _, preset in ipairs(presets) do
+            if preset.name == name then
+                preset.data = data
+                replaced = true
+                break
+            end
+        end
+        if not replaced then
+            presets[#presets + 1] = { name = name, data = data }
+        end
+        sortPresets(presets)
+        savePresets(storageKey, presets)
+        for i, preset in ipairs(presets) do
+            if preset.name == name then
+                state.selectedIndex = i
+                state.appliedData = data
+                break
+            end
+        end
+        ui.toast(ui.Icons.Confirm, "Preset saved: " .. name)
+        state.inputName = ""
+    end
+    if not canSave then ui.popDisabled() end
+
+    if resetFunc and ui.button("Reset to Defaults##" .. prefix) then
+        resetFunc()
+        state.selectedIndex = 0
+        state.appliedData = nil
+    end
+    ui.sameLine()
+    if not hasPresets then ui.pushDisabled() end
+    if ui.button("Clean up presets##" .. prefix) then
+        state.cleanupChecked = {}
+        presetForceCleanupTab[prefix] = true
+    end
+    if not hasPresets then ui.popDisabled() end
+end
+
+local function renderPresetCleanup(prefix)
+    local storageKey = prefix .. "Presets"
+    local state = presetState[prefix]
+    local presets = loadPresets(storageKey)
+    if #presets == 0 then
+        ui.text("No presets saved.")
+        return
+    end
+
+    if ui.button("Select All##cleanup" .. prefix) then
+        for _, preset in ipairs(presets) do
+            state.cleanupChecked[preset.name] = true
+        end
+    end
+    ui.sameLine()
+    if ui.button("Deselect All##cleanup" .. prefix) then
+        state.cleanupChecked = {}
+    end
+
+    ui.separator()
+
+    for _, preset in ipairs(presets) do
+        local checked = state.cleanupChecked[preset.name] or false
+        if ui.checkbox(preset.name .. "##cleanup" .. prefix, checked) then
+            state.cleanupChecked[preset.name] = not checked
+        end
+    end
+
+    ui.separator()
+
+    local selectedCount = 0
+    for _, preset in ipairs(presets) do
+        if state.cleanupChecked[preset.name] then selectedCount = selectedCount + 1 end
+    end
+
+    if selectedCount == 0 then ui.pushDisabled() end
+    if ui.button("Delete selected (" .. selectedCount .. ")##cleanup" .. prefix) then
+        local remaining = {}
+        for _, preset in ipairs(presets) do
+            if not state.cleanupChecked[preset.name] then
+                remaining[#remaining + 1] = preset
+            end
+        end
+        savePresets(storageKey, remaining)
+        state.cleanupChecked = {}
+        state.selectedIndex = math.min(state.selectedIndex, #remaining)
+        state.appliedData = nil
+        ui.toast(ui.Icons.Confirm, selectedCount .. " preset(s) deleted")
+    end
+    if selectedCount == 0 then ui.popDisabled() end
+end
+
 local function renderSettings(prefix, fieldDefs)
-    local opacityKey = prefix .. "Opacity"
     local bgColorKey = prefix .. "BgColor"
+    local borderColorKey = prefix .. "BorderColor"
     local fontIndexKey = prefix .. "FontIndex"
     local baseSizeKey = prefix .. "BaseFontSize"
     local scaleFontKey = prefix .. "ScaleFont"
@@ -1426,23 +1781,27 @@ local function renderSettings(prefix, fieldDefs)
             
             -- Move up
             if i > 1 then
-                if ui.button("^##up" .. id) then
+                if ui.button("⬆##up" .. prefix .. id, DISPLAY_ROW_BUTTON_SIZE) then
                     order[i], order[i-1] = order[i-1], order[i]
                     orderChanged = true
                 end
             else
-                ui.dummy(vec2(23, 0))
+                ui.pushDisabled()
+                ui.button("⬆##upPlaceholder" .. prefix .. id, DISPLAY_ROW_BUTTON_SIZE)
+                ui.popDisabled()
             end
             ui.sameLine()
             
             -- Move down
             if i < #order then
-                if ui.button("v##dn" .. id) then
+                if ui.button("⬇##dn" .. prefix .. id, DISPLAY_ROW_BUTTON_SIZE) then
                     order[i], order[i+1] = order[i+1], order[i]
                     orderChanged = true
                 end
             else
-                ui.dummy(vec2(23, 0))
+                ui.pushDisabled()
+                ui.button("⬇##dnPlaceholder" .. prefix .. id, DISPLAY_ROW_BUTTON_SIZE)
+                ui.popDisabled()
             end
             ui.sameLine()
             
@@ -1498,17 +1857,22 @@ local function renderSettings(prefix, fieldDefs)
     ui.offsetCursorY(SETTINGS_SECTION_SPACING)
     ui.header("Window Options")
     
-    ui.setNextItemWidth(150)
-    sliderRefs.opacity.value = config[opacityKey]
-    if ui.slider("Background Opacity", sliderRefs.opacity, 0, 100, "%.0f%%") then
-        config[opacityKey] = sliderRefs.opacity.value
-    end
-    ui.sameLine()
+    ui.text("Window background")
+    ui.sameLine(150)
     local bgColor = getCachedColor(bgColorKey, config[bgColorKey] or defaultBgColor)
-    ui.colorButton("BG##bgc", bgColor,
-            ui.ColorPickerFlags.NoAlpha + ui.ColorPickerFlags.PickerHueBar)
+    ui.colorButton("##bgc" .. prefix, bgColor, COLOR_PICKER_FLAGS)
     config[bgColorKey] = rgbmToHex(bgColor)
-    if ui.itemHovered() then ui.setTooltip("Background color") end
+    if ui.itemHovered() then ui.setTooltip("Background color and opacity") end
+
+    ui.text("Window border")
+    ui.sameLine(150)
+    local borderColor = getCachedColor(borderColorKey, config[borderColorKey] or defaultBorderColor)
+    ui.colorButton("##bdc" .. prefix, borderColor, COLOR_PICKER_FLAGS)
+    config[borderColorKey] = rgbmToHex(borderColor)
+    if ui.itemHovered() then ui.setTooltip("Border color and opacity") end
+
+    intSlider("Border thickness", prefix .. "BorderThickness", 0, 10)
+    intSlider("Corner radius", prefix .. "CornerRadius", 0, 60)
 
     local paddingXKey = prefix .. "PaddingX"
     local paddingYKey = prefix .. "PaddingY"
@@ -1620,6 +1984,18 @@ local function renderLanguageSelector()
     ui.offsetCursorY(SETTINGS_SECTION_SPACING)
 end
 
+local function renderSettingsTabs(prefix, renderSettingsContent)
+    ui.tabBar(prefix .. "SettingsTabs", function()
+        ui.tabItem("Settings", renderSettingsContent)
+
+        local cleanupFlags = presetForceCleanupTab[prefix] and ui.TabItemFlags.SetSelected or 0
+        if presetForceCleanupTab[prefix] then presetForceCleanupTab[prefix] = false end
+        ui.tabItem("Manage Presets", cleanupFlags, function()
+            renderPresetCleanup(prefix)
+        end)
+    end)
+end
+
 ---------------------------------------------------------------------------
 -- TIME WINDOW
 ---------------------------------------------------------------------------
@@ -1628,32 +2004,32 @@ function script.windowTime(dt)
 end
 
 function script.windowTimeSettings(dt)
-    renderLanguageSelector()
-    renderSettings("time", timeFieldDefs)
-    
-    -- Time-specific option
-    ui.offsetCursorY(SETTINGS_SECTION_SPACING)
-    ui.header("Time Format")
-    
-    if ui.checkbox("Use 24-hour format", config.timeUse24h) then
-        config.timeUse24h = not config.timeUse24h
-    end
-    if ui.itemHovered() then
-        ui.setTooltip("When disabled, times display as 12-hour with AM/PM")
-    end
-    
-    if ui.checkbox("Show seconds", config.timeShowSeconds) then
-        config.timeShowSeconds = not config.timeShowSeconds
-    end
-    if ui.itemHovered() then
-        ui.setTooltip("When disabled, times display as HH:MM only")
-    end
-    
-    -- Reset to defaults
-    ui.offsetCursorY(SETTINGS_SECTION_SPACING * 2)
-    if ui.button("Reset to Defaults") then
-        resetWindowConfig("time", timeFieldDefs, {"timeUse24h", "timeShowSeconds"})
-    end
+    renderSettingsTabs("time", function()
+        renderLanguageSelector()
+        renderSettings("time", timeFieldDefs)
+
+        -- Time-specific option
+        ui.offsetCursorY(SETTINGS_SECTION_SPACING)
+        ui.header("Time Format")
+
+        if ui.checkbox("Use 24-hour format", config.timeUse24h) then
+            config.timeUse24h = not config.timeUse24h
+        end
+        if ui.itemHovered() then
+            ui.setTooltip("When disabled, times display as 12-hour with AM/PM")
+        end
+
+        if ui.checkbox("Show seconds", config.timeShowSeconds) then
+            config.timeShowSeconds = not config.timeShowSeconds
+        end
+        if ui.itemHovered() then
+            ui.setTooltip("When disabled, times display as HH:MM only")
+        end
+
+        renderPresetSection("time", function()
+            resetWindowConfig("time", timeFieldDefs, {"timeUse24h", "timeShowSeconds"})
+        end)
+    end)
 end
 
 ---------------------------------------------------------------------------
@@ -1664,14 +2040,14 @@ function script.windowWeather(dt)
 end
 
 function script.windowWeatherSettings(dt)
-    renderLanguageSelector()
-    renderSettings("weather", weatherFieldDefs)
-    
-    -- Reset to defaults
-    ui.offsetCursorY(SETTINGS_SECTION_SPACING * 2)
-    if ui.button("Reset to Defaults") then
-        resetWindowConfig("weather", weatherFieldDefs)
-    end
+    renderSettingsTabs("weather", function()
+        renderLanguageSelector()
+        renderSettings("weather", weatherFieldDefs)
+
+        renderPresetSection("weather", function()
+            resetWindowConfig("weather", weatherFieldDefs)
+        end)
+    end)
 end
 
 ---------------------------------------------------------------------------
@@ -1682,28 +2058,28 @@ function script.windowGrip(dt)
 end
 
 function script.windowGripSettings(dt)
-    renderLanguageSelector()
-    renderSettings("grip", gripFieldDefs)
-    
-    -- Grip-specific option
-    ui.offsetCursorY(SETTINGS_SECTION_SPACING)
-    ui.header("Grip Format")
-    
-    ui.text("Decimal places")
-    ui.sameLine(120)
-    ui.setNextItemWidth(80)
-    local decimalOptions = {"0", "1", "2"}
-    local currentDecimal = (config.gripDecimalPlaces or 0) + 1  -- combo is 1-indexed
-    local newDecimal = ui.combo("##decimals", currentDecimal, ui.ComboFlags.None, decimalOptions)
-    if newDecimal ~= currentDecimal then
-        config.gripDecimalPlaces = newDecimal - 1  -- store as 0-indexed
-    end
-    
-    -- Reset to defaults
-    ui.offsetCursorY(SETTINGS_SECTION_SPACING * 2)
-    if ui.button("Reset to Defaults") then
-        resetWindowConfig("grip", gripFieldDefs, {"gripDecimalPlaces"})
-    end
+    renderSettingsTabs("grip", function()
+        renderLanguageSelector()
+        renderSettings("grip", gripFieldDefs)
+
+        -- Grip-specific option
+        ui.offsetCursorY(SETTINGS_SECTION_SPACING)
+        ui.header("Grip Format")
+
+        ui.text("Decimal places")
+        ui.sameLine(120)
+        ui.setNextItemWidth(80)
+        local decimalOptions = {"0", "1", "2"}
+        local currentDecimal = (config.gripDecimalPlaces or 0) + 1  -- combo is 1-indexed
+        local newDecimal = ui.combo("##decimals", currentDecimal, ui.ComboFlags.None, decimalOptions)
+        if newDecimal ~= currentDecimal then
+            config.gripDecimalPlaces = newDecimal - 1  -- store as 0-indexed
+        end
+
+        renderPresetSection("grip", function()
+            resetWindowConfig("grip", gripFieldDefs, {"gripDecimalPlaces"})
+        end)
+    end)
 end
 
 ---------------------------------------------------------------------------
