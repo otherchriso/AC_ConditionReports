@@ -490,6 +490,10 @@ local configDefaults = {
     weatherFontIndex = 1,
     weatherBaseFontSize = 14,
     weatherScaleFont = false,
+    weatherTemperatureDecimalPlaces = 0,
+    weatherWindDecimalPlaces = 0,
+    weatherHumidityDecimalPlaces = 0,
+    weatherRainDecimalPlaces = 0,
     weatherFieldOrder = buildDefaultOrder(weatherFieldDefs),
     weatherPaddingX = 0,
     weatherPaddingY = 0,
@@ -1125,12 +1129,12 @@ end
 
 -- Convert Celsius to Fahrenheit
 local function celsiusToFahrenheit(c)
-    return math.floor(c * 9 / 5 + 32 + 0.5)
+    return c * 9 / 5 + 32
 end
 
 -- Convert km/h to mph
 local function kmhToMph(kmh)
-    return math.floor(kmh * 0.621371 + 0.5)
+    return kmh * 0.621371
 end
 
 ---------------------------------------------------------------------------
@@ -1191,8 +1195,8 @@ local function computeData()
         data.roadTemp = celsiusToFahrenheit(sim.roadTemperature)
         data.tempUnit = "°F"
     else
-        data.airTemp = math.floor(sim.ambientTemperature + 0.5)
-        data.roadTemp = math.floor(sim.roadTemperature + 0.5)
+        data.airTemp = sim.ambientTemperature
+        data.roadTemp = sim.roadTemperature
         data.tempUnit = "°"
     end
     
@@ -1201,7 +1205,7 @@ local function computeData()
         data.windSpeed = kmhToMph(sim.windSpeedKmh)
         data.windUnit = "mph"
     else
-        data.windSpeed = math.floor(sim.windSpeedKmh + 0.5)
+        data.windSpeed = sim.windSpeedKmh
         data.windUnit = "km/h"
     end
     
@@ -1212,13 +1216,13 @@ local function computeData()
     
     -- Humidity (from conditions set, not sim)
     local conditions = ac.getConditionsSet()
-    data.humidity = math.floor((conditions.humidity or 0) * 100 + 0.5)
+    data.humidity = (conditions.humidity or 0) * 100
     
     -- Rain and wetness data (0-100%)
     data.transition = math.floor((sim.weatherConditions.transition or 0) * 100 + 0.5)
-    data.rainIntensity = math.floor((sim.rainIntensity or 0) * 100 + 0.5)
-    data.rainWetness = math.floor((sim.rainWetness or 0) * 100 + 0.5)
-    data.rainWater = math.floor((sim.rainWater or 0) * 100 + 0.5)
+    data.rainIntensity = (sim.rainIntensity or 0) * 100
+    data.rainWetness = (sim.rainWetness or 0) * 100
+    data.rainWater = (sim.rainWater or 0) * 100
     
     -- Clock speed / time multiplier display
     if mult < 0.01 then
@@ -1238,6 +1242,17 @@ computeData()
 -- Returns (labelText, valueText) - label is empty string if showLabel is false
 -- Uses language strings for all labels
 ---------------------------------------------------------------------------
+local function formatLocalizedNumber(value, decimalPlaces)
+    local factor = 10 ^ decimalPlaces
+    local rounded = math.floor(value * factor + 0.5) / factor
+    local valueText = string.format("%." .. decimalPlaces .. "f", rounded)
+    local decimalSeparator = lang.DecimalSeparator or "."
+    if decimalSeparator ~= "." then
+        valueText = valueText:gsub("%.", decimalSeparator)
+    end
+    return valueText
+end
+
 local function getTimeFieldText(id, showLabel)
     if id == "GameDate" then
         return showLabel and lang.Labels.GameDate or "", data.gameDate
@@ -1265,27 +1280,35 @@ local function getWeatherFieldText(id, showLabel)
     elseif id == "Forecast" then
         return showLabel and lang.Labels.Forecast or "", data.forecast
     elseif id == "Temperature" then
+        local decimalPlaces = config.weatherTemperatureDecimalPlaces or 0
+        local airTemp = formatLocalizedNumber(data.airTemp, decimalPlaces)
+        local roadTemp = formatLocalizedNumber(data.roadTemp, decimalPlaces)
         if showLabel then
-            return lang.Labels.Temperature, string.format("%s %d%s  %s %d%s", 
-                lang.Labels.Air, data.airTemp, data.tempUnit,
-                lang.Labels.Road, data.roadTemp, data.tempUnit)
+            return lang.Labels.Temperature, string.format("%s %s%s  %s %s%s",
+                lang.Labels.Air, airTemp, data.tempUnit,
+                lang.Labels.Road, roadTemp, data.tempUnit)
         else
-            return "", string.format("%d%s/%d%s", data.airTemp, data.tempUnit, data.roadTemp, data.tempUnit)
+            return "", string.format("%s%s/%s%s", airTemp, data.tempUnit, roadTemp, data.tempUnit)
         end
     elseif id == "Humidity" then
-        return showLabel and lang.Labels.Humidity or "", string.format("%d%%", data.humidity)
+        local humidity = formatLocalizedNumber(data.humidity, config.weatherHumidityDecimalPlaces or 0)
+        return showLabel and lang.Labels.Humidity or "", humidity .. "%"
     elseif id == "Wind" then
+        local windSpeed = formatLocalizedNumber(data.windSpeed, config.weatherWindDecimalPlaces or 0)
         if showLabel then
-            return lang.Labels.Wind, string.format("%s %d %s", data.windDir, data.windSpeed, data.windUnit)
+            return lang.Labels.Wind, string.format("%s %s %s", data.windDir, windSpeed, data.windUnit)
         else
-            return "", string.format("%s %d %s", data.windDir, data.windSpeed, data.windUnit)
+            return "", string.format("%s %s %s", data.windDir, windSpeed, data.windUnit)
         end
     elseif id == "RainIntensity" then
-        return showLabel and lang.Labels.RainIntensity or "", string.format("%d%%", data.rainIntensity)
+        local rain = formatLocalizedNumber(data.rainIntensity, config.weatherRainDecimalPlaces or 0)
+        return showLabel and lang.Labels.RainIntensity or "", rain .. "%"
     elseif id == "TrackWetness" then
-        return showLabel and lang.Labels.TrackWetness or "", string.format("%d%%", data.rainWetness)
+        local wetness = formatLocalizedNumber(data.rainWetness, config.weatherRainDecimalPlaces or 0)
+        return showLabel and lang.Labels.TrackWetness or "", wetness .. "%"
     elseif id == "StandingWater" then
-        return showLabel and lang.Labels.StandingWater or "", string.format("%d%%", data.rainWater)
+        local puddles = formatLocalizedNumber(data.rainWater, config.weatherRainDecimalPlaces or 0)
+        return showLabel and lang.Labels.StandingWater or "", puddles .. "%"
     end
     return "", ""
 end
@@ -2044,8 +2067,36 @@ function script.windowWeatherSettings(dt)
         renderLanguageSelector()
         renderSettings("weather", weatherFieldDefs)
 
+        ui.offsetCursorY(SETTINGS_SECTION_SPACING)
+        ui.header("Value Formats")
+
+        local decimalOptions = {"0", "1", "2"}
+        local formatRows = {
+            {label = "Temperatures", key = "weatherTemperatureDecimalPlaces"},
+            {label = "Wind speed", key = "weatherWindDecimalPlaces"},
+            {label = "Humidity/Mist", key = "weatherHumidityDecimalPlaces"},
+            {label = "Rain/Wetness/Puddles", key = "weatherRainDecimalPlaces"},
+        }
+        for _, row in ipairs(formatRows) do
+            ui.text(row.label)
+            ui.sameLine(180)
+            ui.setNextItemWidth(80)
+            local currentDecimal = (config[row.key] or 0) + 1
+            local newDecimal = ui.combo("##" .. row.key, currentDecimal, ui.ComboFlags.None, decimalOptions)
+            if newDecimal ~= currentDecimal then
+                config[row.key] = newDecimal - 1
+            end
+            ui.sameLine()
+            ui.text("decimals")
+        end
+
         renderPresetSection("weather", function()
-            resetWindowConfig("weather", weatherFieldDefs)
+            resetWindowConfig("weather", weatherFieldDefs, {
+                "weatherTemperatureDecimalPlaces",
+                "weatherWindDecimalPlaces",
+                "weatherHumidityDecimalPlaces",
+                "weatherRainDecimalPlaces",
+            })
         end)
     end)
 end
