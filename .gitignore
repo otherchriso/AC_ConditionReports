@@ -1,2 +1,5 @@
 *.psd
 todo.md
+
+# Ignore changes to i18n ; real changes can of course be manually committed
+i18n/
